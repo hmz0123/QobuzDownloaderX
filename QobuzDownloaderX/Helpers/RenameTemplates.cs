@@ -199,7 +199,10 @@ namespace QobuzDownloaderX.Helpers
                 if (QoAlbum != null)
                 {
                     string artistsNames = GetReleaseArtists(QoAlbum, updateAlbumInfoLabels: false) ?? "";
-                    if (variousArtistsNames.Any(name => artistsNames.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                    bool isPlaylistDirectoryTemplate = QoPlaylist != null
+                        && template.IndexOf("%playlist", StringComparison.OrdinalIgnoreCase) >= 0;
+                    if (!isPlaylistDirectoryTemplate
+                        && variousArtistsNames.Any(name => artistsNames.Equals(name, StringComparison.OrdinalIgnoreCase)))
                     {
                         // Convert all text between % symbols to lowercase
                         template = percentRegex.Replace(Settings.Default.savedVaTrackTemplate, match => match.Value.ToLower());
