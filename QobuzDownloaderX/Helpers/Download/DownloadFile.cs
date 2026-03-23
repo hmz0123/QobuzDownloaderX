@@ -33,6 +33,21 @@ namespace QobuzDownloaderX
 
         public string embeddedArtworkPath { get; set; }
 
+        private static void CleanupTempFile(string tempFile)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(tempFile) && File.Exists(tempFile))
+                {
+                    File.Delete(tempFile);
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup only.
+            }
+        }
+
         [SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "I don’t feel like changing this and it doesn’t matter")]
         public async Task<string> createPath(
             string downloadLocation,
@@ -46,6 +61,7 @@ namespace QobuzDownloaderX
             Album QoAlbum,
             Item QoItem,
             Playlist QoPlaylist,
+            string effectiveAudioFormat = null,
             string effectiveFormatId = null,
             int? effectiveBitDepth = null,
             double? effectiveSamplingRate = null)
@@ -53,17 +69,18 @@ namespace QobuzDownloaderX
             return await Task.Run(() =>
             {
                 string downloadPath;
+                string pathAudioFormat = effectiveAudioFormat ?? qbdlxForm._qbdlxForm.audio_format;
                 if (QoPlaylist == null)
                 {
                     qbdlxForm._qbdlxForm.logger.Debug("Using non-playlist path");
-                    string artistTemplateConverted = renameTemplates.renameTemplates(artistTemplate, paddedTrackLength, paddedDiscLength, qbdlxForm._qbdlxForm.audio_format, QoAlbum, null, null, effectiveFormatId, effectiveBitDepth, effectiveSamplingRate);
-                    string albumTemplateConverted = renameTemplates.renameTemplates(albumTemplate, paddedTrackLength, paddedDiscLength, qbdlxForm._qbdlxForm.audio_format, QoAlbum, null, null, effectiveFormatId, effectiveBitDepth, effectiveSamplingRate);
+                    string artistTemplateConverted = renameTemplates.renameTemplates(artistTemplate, paddedTrackLength, paddedDiscLength, pathAudioFormat, QoAlbum, null, null, effectiveFormatId, effectiveBitDepth, effectiveSamplingRate);
+                    string albumTemplateConverted = renameTemplates.renameTemplates(albumTemplate, paddedTrackLength, paddedDiscLength, pathAudioFormat, QoAlbum, null, null, effectiveFormatId, effectiveBitDepth, effectiveSamplingRate);
                     downloadPath = ZlpPathHelper.Combine(downloadLocation, artistTemplateConverted, albumTemplateConverted.TrimEnd(ZlpPathHelper.DirectorySeparatorChar) + ZlpPathHelper.DirectorySeparatorChar);                    
                 }
                 else
                 {
                     qbdlxForm._qbdlxForm.logger.Debug("Using playlist path");
-                    string playlistTemplateConverted = renameTemplates.renameTemplates(playlistTemplate, paddedTrackLength, paddedDiscLength, qbdlxForm._qbdlxForm.audio_format, QoAlbum, QoItem, QoPlaylist, effectiveFormatId, effectiveBitDepth, effectiveSamplingRate);
+                    string playlistTemplateConverted = renameTemplates.renameTemplates(playlistTemplate, paddedTrackLength, paddedDiscLength, pathAudioFormat, QoAlbum, QoItem, QoPlaylist, effectiveFormatId, effectiveBitDepth, effectiveSamplingRate);
                     downloadPath = ZlpPathHelper.Combine(downloadLocation, playlistTemplateConverted.TrimEnd(ZlpPathHelper.DirectorySeparatorChar) + ZlpPathHelper.DirectorySeparatorChar);
                 }
                 downloadPath = RenameTemplates.spacesRegex.Replace(downloadPath, " "); // Remove double spaces
@@ -72,7 +89,7 @@ namespace QobuzDownloaderX
             });
         }
 
-        public async Task DownloadStream(string downloadType, string streamUrl, string downloadPath, string filePath, string audio_format, Album QoAlbum, Item QoItem, GetInfo getInfo, CancellationToken abortToken, DownloadStats stats)
+        public async Task<bool> DownloadStream(string downloadType, string streamUrl, string downloadPath, string filePath, string audio_format, Album QoAlbum, Item QoItem, GetInfo getInfo, CancellationToken abortToken, DownloadStats stats)
         {
             string tempDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "qbdlx-temp");
             string tempFile = ZlpPathHelper.Combine(tempDir, $"qbdlx_downloading-{QoItem.Id}{audio_format}");
@@ -99,7 +116,7 @@ namespace QobuzDownloaderX
                 {
                     qbdlxForm._qbdlxForm.logger.Error("Temp directory is not writable: " + ex.Message);
                     getInfo.updateDownloadOutput($"ERROR: Temp directory '{tempDir}' is not writable: {ex.Message}\r\n");
-                    throw;
+                    return false;
                 }
             }
 
@@ -273,14 +290,20 @@ namespace QobuzDownloaderX
 
                 qbdlxForm._qbdlxForm.logger.Debug("DownloadStream complete.");
                 getInfo.updateDownloadOutput($" {qbdlxForm._qbdlxForm.downloadOutputDone}\r\n");
+                return true;
+            }
+            catch (OperationCanceledException) when (abortToken.IsCancellationRequested)
+            {
+                CleanupTempFile(tempFile);
+                throw;
             }
             catch (TaskCanceledException ex)
             {
                 string msg = "DownloadStream timed out (TaskCanceledException): " + ex.Message;
                 qbdlxForm._qbdlxForm.logger.Error(msg);
                 Miscellaneous.LogFailedDownloadStreamEntry(Path.GetDirectoryName(filePath), QoItem, msg);
-                throw;
-
+                CleanupTempFile(tempFile);
+                return false;
             }
             catch (OperationCanceledException ex)
             {
@@ -289,8 +312,12 @@ namespace QobuzDownloaderX
                     string msg = "DownloadStream canceled (OperationCanceledException): " + ex.Message;
                     qbdlxForm._qbdlxForm.logger.Error(msg);
                     Miscellaneous.LogFailedDownloadStreamEntry(Path.GetDirectoryName(filePath), QoItem, msg);
-                    throw;
+                    CleanupTempFile(tempFile);
+                    return false;
                 }
+
+                CleanupTempFile(tempFile);
+                throw;
             }
             catch (WebException webEx)
             {
@@ -298,6 +325,8 @@ namespace QobuzDownloaderX
                 qbdlxForm._qbdlxForm.logger.Error(msg);
                 Miscellaneous.LogFailedDownloadStreamEntry(Path.GetDirectoryName(filePath), QoItem, msg);
                 getInfo.updateDownloadOutput(msg);
+                CleanupTempFile(tempFile);
+                return false;
             }
             catch (Exception ex) when (
                   (ex is IOException ioEx && ioEx.HResult == unchecked((int)0x80070070)) ||
@@ -339,14 +368,17 @@ namespace QobuzDownloaderX
                     qbdlxForm._qbdlxForm.logger.Error(msg);
                     Miscellaneous.LogFailedDownloadStreamEntry(Path.GetDirectoryName(filePath), QoItem, msg);
                 }
-                throw; // rethrow original exception
+
+                CleanupTempFile(tempFile);
+                return false;
             }
             catch (Exception ex)
             {
                 string msg = "DownloadStream failed (Exception): " + ex.Message;
                 qbdlxForm._qbdlxForm.logger.Error(msg);
                 Miscellaneous.LogFailedDownloadStreamEntry(Path.GetDirectoryName(filePath), QoItem, msg);
-                throw;
+                CleanupTempFile(tempFile);
+                return false;
             }
         }
 

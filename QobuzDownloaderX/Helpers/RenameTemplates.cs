@@ -285,9 +285,16 @@ namespace QobuzDownloaderX.Helpers
                 template = template
                     .Replace("%playlistid%", QoPlaylist.Id.ToString())
                     .Replace("%playlisttitle%", QoPlaylist.Name)
-                    .Replace("%format%", fileFormat.ToUpper().TrimStart('.'))
-                    .Replace("%formatwithhiresquality%", fileFormat.ToUpper().TrimStart('.'))
-                    .Replace("%formatwithquality%", fileFormat.ToUpper().TrimStart('.')); 
+                    .Replace("%format%", fileFormat.ToUpper().TrimStart('.'));
+
+                template = RenameFormatTemplate(
+                    template,
+                    selectedFormatId,
+                    fileFormat,
+                    effectiveBitDepth ?? QoItem?.MaximumBitDepth ?? QoAlbum?.MaximumBitDepth ?? 0,
+                    effectiveSamplingRate ?? QoItem?.MaximumSamplingRate ?? QoAlbum?.MaximumSamplingRate ?? 0,
+                    "%formatwithhiresquality%",
+                    "%formatwithquality%");
 
                 if (QoItem != null)
                 {
